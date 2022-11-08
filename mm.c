@@ -24,11 +24,11 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "ateam",
+    "anti",
     /* First member's full name */
-    "Harry Bovik",
+    "Andreas Nicolaj Tietgen",
     /* First member's email address */
-    "bovik@cs.cmu.edu",
+    "anti@itu.dk",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -61,7 +61,7 @@ void *mm_malloc(size_t size)
     int newsize = ALIGN(size + SIZE_T_SIZE);
     void *p = mem_sbrk(newsize);
     if (p == (void *)-1)
-	return NULL;
+	    return NULL;
     else {
         *(size_t *)p = size;
         return (void *)((char *)p + SIZE_T_SIZE);
