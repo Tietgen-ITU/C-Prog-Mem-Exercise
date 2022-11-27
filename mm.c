@@ -81,13 +81,19 @@ team_t team = {
 // Global variables
 static char *heap_listp;
 static int heap_size;
-static char *free_listp;
+
+static unsigned int num_free_lists = 10;
+static char *free_lists[10];
 
 /* Function definitions */
 
 static void *insert_free_block(void *);
 static void remove_free_block(void *);
 static void *coalesce(void *);
+static char *get_free_list(size_t);
+static char *get_best_free_list(size_t);
+static int get_free_list_index(size_t);
+static void put_block_into_list(void *);
 static void mm_check();
 static void print_pointer_info(char *, void *);
 
@@ -95,16 +101,28 @@ static void print_pointer_info(char *, void *);
 
 static void *find_fit(size_t size) {
 
-    char *current = free_listp;
+    int index = get_free_list_index(size); // Get index for free list based on size
 
-    while(current != NULL) {
+    //mm_check("Find fit before");
 
-        size_t current_size = GET_SIZE(HDRP(current)); 
+    for(int i = index; i < num_free_lists; i++) {
+        char *current = free_lists[i];
 
-        if(current_size >= size)
-            return current;
-            
-        current = NEXT_FREE_BLOCK(current);    
+        //printf("free_list: %d \n", i);
+
+        if(current == NULL)
+            continue;
+
+        // Find the best
+        while(current != NULL) {
+
+            size_t current_size = GET_SIZE(HDRP(current)); 
+
+            if(current_size >= size)
+                return current;
+                
+            current = NEXT_FREE_BLOCK(current);    
+        }
     }
 
     return NULL;
@@ -112,7 +130,7 @@ static void *find_fit(size_t size) {
 
 static void place(void *bp, size_t asize) {
     size_t size = GET_SIZE(HDRP(bp));
-    size_t size_diff = GET_SIZE(HDRP(bp)) - asize;
+    size_t size_diff = size - asize;
     unsigned int should_split = size_diff >= 2 * DSIZE;
     
     remove_free_block(bp);
@@ -122,14 +140,12 @@ static void place(void *bp, size_t asize) {
         PUT(HDRP(bp), PACK(size, 1));
         PUT(FTRP(bp), PACK(size, 1)); 
     } else {
-
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
 
         void *split_p = NEXT_BLKP(bp);
         PUT(HDRP(split_p), PACK(size_diff, 0));
         PUT(FTRP(split_p), PACK(size_diff, 0));
-
         insert_free_block(split_p);
     }
 }
@@ -191,14 +207,16 @@ static void *extend_heap(size_t words) {
         return NULL;
 
     heap_size += size;
+    
 
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0)); /* Free block header */
     PUT(FTRP(bp), PACK(size, 0)); /* Free block footer */
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
-    
+
     /* Coalesce if the previous block was free */
-    return insert_free_block(bp);
+    void *res = insert_free_block(bp); 
+    return res;
 }
 
 /* 
@@ -210,6 +228,10 @@ int mm_init(void)
     /* Create the initial empty heap */
     if ((heap_listp = mem_sbrk(heap_size)) == (void *)-1)
         return -1;
+
+    // initialize free lists. Ensure they are set to null
+    for(int i = 0; i < num_free_lists; i++) 
+        free_lists[i] = NULL;
 
     /* Alignment padding */
     PUT(heap_listp, 0);                          
@@ -313,6 +335,7 @@ The free block coalesced
 static void *insert_free_block(void *bp) {
 
     void *result_bp = coalesce(bp);
+    char *free_listp = get_free_list(GET_SIZE(HDRP(result_bp)));
     char *old_free_listp = free_listp;
 
     // Check that the old free list pointer is not null
@@ -331,7 +354,7 @@ static void *insert_free_block(void *bp) {
     */
     SET_FREE_P(PREV_FRBP(result_bp), NULL);
 
-    free_listp = result_bp;
+    put_block_into_list(result_bp);
 
     return result_bp;
 }
@@ -344,6 +367,9 @@ bp - The free block to be removed from the free list
 */
 static void remove_free_block(void *bp) {
 
+    size_t size = GET_SIZE(HDRP(bp));
+    int free_list_index = get_free_list_index(size);
+
     void *next = NEXT_FREE_BLOCK(bp);
     void *prev = PREV_FREE_BLOCK(bp);
 
@@ -355,8 +381,8 @@ static void remove_free_block(void *bp) {
     *   If the current block(that is going to be removed) 
     *   then set beginning of free_listp to the next pointer 
     */
-    if(bp == free_listp)
-        free_listp = next;
+    if(bp == free_lists[free_list_index])
+        free_lists[free_list_index] = next;
 
     if(next != NULL && prev != NULL) {
 
@@ -372,9 +398,83 @@ static void remove_free_block(void *bp) {
 
 }
 
+static char *get_best_free_list(size_t size) {
+    
+
+    
+
+    return NULL;
+}
+
+static char *get_free_list(size_t size) {
+
+    return free_lists[get_free_list_index(size)];
+}
+
+static int get_free_list_index(size_t size) { 
+   if (size > 16384)
+        return 9;
+    else if (size > 8192)
+        return 8;
+    else if (size > 4096)
+        return 7;
+    else if (size > 2048)
+        return 6;
+    else if (size > 1024)
+        return 5;
+    else if (size > 512)
+        return 4;
+    else if (size > 256)
+        return 3;
+    else if (size > 128)
+        return 2;
+    else if (size > 64)
+        return 1;
+    else
+        return 0; 
+}
+
+static void put_block_into_list(void *bp) {
+
+    size_t size = GET_SIZE(HDRP(bp));
+    int index = get_free_list_index(size);
+    free_lists[index] = bp;
+}
+
 /****************************************
 ************* DEBUG UTILS ***************
 ****************************************/
+
+static void mm_check_size(int list_index, void *bp) {
+
+    size_t size = GET_SIZE(HDRP(bp));
+
+    if(size > 16384 && list_index == 9)
+        return;
+    else if ((size <= 16384 || size > 8192) && list_index == 8 )
+        return;
+    else if ((size <= 8192 || size > 4096) && list_index == 7)
+        return;
+    else if ((size <= 4096 || size > 2048) && list_index == 6)
+        return;
+    else if((size <= 2048 || size > 1024) && list_index == 5)
+        return;
+    else if((size <= 1024 || size > 512) && list_index == 4)
+        return;
+    else if((size <= 512 || size > 256) && list_index == 3)
+        return;
+    else if((size <= 256 || size > 128) && list_index == 2)
+        return;
+    else if((size <= 128 || size > 64) && list_index == 1)
+        return;
+    else if(size <= 64 && list_index == 0)
+        return;
+    else {
+        printf("Block is not allocated in the correct list");
+        abort();
+    }
+}
+
 
 /*
 Checks that the free list is consistent
@@ -384,50 +484,57 @@ function_name - Name of the function that it is being called from
 */
 static void mm_check(char *function_name) {
 
-    void *current = free_listp;
 
     printf("mm_check of %s \n", function_name);
 
-    if(current == NULL) {
-        printf("Nothing in free list! \n \n");
-        return;
+    for(int i = 0; i < num_free_lists; i++) {
+        void *current = free_lists[i];
+
+        if(current == NULL) {
+            printf("Nothing in free list nr. %d! \n \n", i);
+            continue;
+        }
+
+        // Go through heap
+        while(current != NULL) {
+
+            print_pointer_info("", current);
+            
+            int size_header = GET_SIZE(HDRP(current));
+            int alloc_header = GET_ALLOC(HDRP(current));
+            int alloc_footer = GET_ALLOC(FTRP(current));
+            int size_footer = GET_SIZE(FTRP(current));
+
+            void *next = NEXT_FREE_BLOCK(current);
+            
+
+            if(GET_ALLOC(HDRP(current))) {
+                printf("There is something allocated in the free list \n");
+                abort();
+            }
+
+
+            if(next == current) {
+                printf("The current and next points to the same \n");
+                abort();
+            }
+
+            if(size_footer != size_header || alloc_footer != alloc_header) {
+                printf("Header and footer does not match! \n");
+                abort();
+            }
+
+            mm_check_size(i, current);
+
+            printf("\n");
+            current = next;
+        }
     }
-
-    // Go through heap
-    while(current != NULL) {
-
-        print_pointer_info("", current);
-        
-        int size_header = GET_SIZE(HDRP(current));
-        int alloc_header = GET_ALLOC(HDRP(current));
-        int alloc_footer = GET_ALLOC(FTRP(current));
-        int size_footer = GET_SIZE(FTRP(current));
-
-        void *next = NEXT_FREE_BLOCK(current);
-        
-
-        if(GET_ALLOC(HDRP(current))) {
-            printf("There is something allocated in the free list \n");
-            abort();
-        }
-
-
-        if(next == current) {
-            printf("The current and next points to the same \n");
-            abort();
-        }
-
-        if(size_footer != size_header || alloc_footer != alloc_header) {
-            printf("Header and footer does not match! \n");
-            abort();
-        }
-
-        printf("\n");
-        current = next;
-    }
+    
 
     printf("\n");
 }
+
 
 /*
 Prints information about the memory block at the pointer location
